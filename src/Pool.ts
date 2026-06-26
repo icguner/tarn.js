@@ -1,6 +1,6 @@
 import { PendingOperation } from './PendingOperation';
 import { Resource } from './Resource';
-import { checkOptionalTime, delay, duration, now, reflect, tryPromise } from './utils';
+import { checkOptionalTime, duration, now, reflect, tryPromise } from './utils';
 import { EventEmitter } from 'events';
 import { clearInterval } from 'timers';
 
@@ -29,7 +29,8 @@ export class Pool<T> {
   protected pendingAcquires: PendingOperation<T>[];
   protected pendingDestroys: PendingOperation<T>[];
   protected pendingValidations: PendingOperation<T>[];
-  protected interval: NodeJS.Timer | null;
+  protected pendingRetryTimers: ReturnType<typeof setTimeout>[];
+  protected interval: ReturnType<typeof setInterval> | null;
   protected destroyed = false;
   protected propagateCreateError: boolean;
   protected idleTimeoutMillis: number;
@@ -154,6 +155,7 @@ export class Pool<T> {
     this.pendingCreates = [];
     this.pendingAcquires = [];
     this.pendingDestroys = [];
+    this.pendingRetryTimers = [];
 
     // When acquire is pending, but also still in validation phase
     this.pendingValidations = [];
@@ -254,6 +256,7 @@ export class Pool<T> {
         numDestroyed < maxDestroy
       ) {
         numDestroyed++;
+        free.settle();
         this._destroy(free.resource);
       } else {
         newFree.push(free);
@@ -275,13 +278,15 @@ export class Pool<T> {
 
     this._stopReaping();
     this.destroyed = true;
+    this.pendingRetryTimers.forEach(timer => clearTimeout(timer));
+    this.pendingRetryTimers = [];
 
     // First wait for all the pending creates get ready.
     return reflect(
       Promise.all(this.pendingCreates.map(create => reflect(create.promise)))
         .then(() => {
           // eslint-disable-next-line
-          return new Promise((resolve, reject) => {
+          return new Promise<void>((resolve, reject) => {
             // poll every 100ms and wait that all validations are ready
             if (this.numPendingValidations() === 0) {
               resolve();
@@ -309,6 +314,8 @@ export class Pool<T> {
           );
         })
         .then(() => {
+          // Settle free resource deferreds to prevent promise leaks.
+          this.free.forEach(free => free.settle());
           // Now we can destroy all the freed resources.
           return Promise.all(this.free.map(free => reflect(this._destroy(free.resource))));
         })
@@ -435,6 +442,7 @@ export class Pool<T> {
               remove(this.used, free);
               // Only destroy the resource if the validation has failed
               if (!validationSuccess) {
+                free.settle();
                 this._destroy(free.resource);
 
                 // Since we destroyed an invalid resource and were not able to fulfill
@@ -501,6 +509,10 @@ export class Pool<T> {
         return null;
       })
       .catch(err => {
+        if (this.destroyed) {
+          return;
+        }
+
         if (this.propagateCreateError && this.pendingAcquires.length !== 0) {
           // If propagateCreateError is true, we don't retry the create
           // but reject the first pending acquire immediately. Intentionally
@@ -517,7 +529,11 @@ export class Pool<T> {
         });
 
         // Not returned on purpose.
-        delay(this.createRetryIntervalMillis).then(() => this._tryAcquireOrCreate());
+        const retryTimer = setTimeout(() => {
+          remove(this.pendingRetryTimers, retryTimer);
+          this._tryAcquireOrCreate();
+        }, this.createRetryIntervalMillis);
+        this.pendingRetryTimers.push(retryTimer);
       });
   }
 
@@ -543,6 +559,7 @@ export class Pool<T> {
       .then(resource => {
         if (pendingCreate.isRejected) {
           this.destroyer(resource);
+          pendingCreate.resolve(resource);
           return null;
         }
 
@@ -556,6 +573,7 @@ export class Pool<T> {
       })
       .catch(err => {
         if (pendingCreate.isRejected) {
+          pendingCreate.reject(err);
           return null;
         }
 
@@ -633,7 +651,10 @@ export class Pool<T> {
       } catch (err) {
         // There's nothing we can do here but log the error. This would otherwise
         // leak out as an unhandled exception.
-        this.log(`Tarn: event handler "${eventName}" threw an exception ${err.stack}`, 'warn');
+        this.log(
+          `Tarn: event handler "${eventName}" threw an exception ${(err as Error).stack}`,
+          'warn'
+        );
       }
     });
   }

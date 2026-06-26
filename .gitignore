@@ -5,3 +5,5 @@ testCoverage
 *.DS_Store
 profiling
 dist
+yarn.lock
+package-lock.json

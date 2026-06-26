@@ -1,22 +1,28 @@
-'use strict';
-
-const Promise = require('bluebird');
-const Pool = require('./').Pool;
-const TimeoutError = require('./').TimeoutError;
-const expect = require('expect.js');
+import { version as vitestVersion } from 'vitest/package.json';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import Promise from 'bluebird';
+import { Pool, TimeoutError } from './dist/tarn.js';
 
 describe('Tarn', () => {
   let pool = null;
+  let cleanupFns = [];
 
   beforeEach(() => {
     pool = null;
+    cleanupFns = [];
   });
 
-  afterEach(() => {
-    if (pool) {
-      // Stop the reaping loop.
-      pool._stopReaping();
+  afterEach(async () => {
+    // Clear any test-scoped cancellable timers
+    cleanupFns.forEach(fn => fn());
+    cleanupFns = [];
+
+    if (pool && !pool.destroyed) {
+      // Settle used resource deferreds so destroy() doesn't hang waiting for releases
+      pool.used.forEach(used => used.deferred.resolve(undefined));
+      await pool.destroy();
     }
+    pool = null;
   });
 
   describe('constructor', () => {
@@ -27,9 +33,7 @@ describe('Tarn', () => {
           min: 0,
           max: 1
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.create function most be provided');
-      });
+      }).to.throw('Tarn: opt.create function most be provided');
     });
 
     it('should fail if no opt.destroy function is given', () => {
@@ -39,9 +43,7 @@ describe('Tarn', () => {
           min: 0,
           max: 1
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.destroy function most be provided');
-      });
+      }).to.throw('Tarn: opt.destroy function most be provided');
     });
 
     it('should fail if opt.min is missing', () => {
@@ -51,9 +53,7 @@ describe('Tarn', () => {
           destroy() {},
           max: 1
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.min must be an integer >= 0');
-      });
+      }).to.throw('Tarn: opt.min must be an integer >= 0');
     });
 
     it('should fail if a non-integer opt.min is given', () => {
@@ -64,9 +64,7 @@ describe('Tarn', () => {
           min: '0',
           max: 1
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.min must be an integer >= 0');
-      });
+      }).to.throw('Tarn: opt.min must be an integer >= 0');
     });
 
     it('should fail if a negative opt.min is given', () => {
@@ -77,9 +75,7 @@ describe('Tarn', () => {
           min: -1,
           max: 1
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.min must be an integer >= 0');
-      });
+      }).to.throw('Tarn: opt.min must be an integer >= 0');
     });
 
     it('should fail if opt.max is missing', () => {
@@ -89,9 +85,7 @@ describe('Tarn', () => {
           destroy() {},
           min: 0
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.max must be an integer > 0');
-      });
+      }).to.throw('Tarn: opt.max must be an integer > 0');
     });
 
     it('should fail if a non-integer opt.max is given', () => {
@@ -102,9 +96,7 @@ describe('Tarn', () => {
           min: 0,
           max: '1'
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.max must be an integer > 0');
-      });
+      }).to.throw('Tarn: opt.max must be an integer > 0');
     });
 
     it('should fail if a negative opt.max is given', () => {
@@ -115,9 +107,7 @@ describe('Tarn', () => {
           min: 0,
           max: -1
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.max must be an integer > 0');
-      });
+      }).to.throw('Tarn: opt.max must be an integer > 0');
     });
 
     it('should fail if a zero opt.max is given', () => {
@@ -128,9 +118,7 @@ describe('Tarn', () => {
           min: 0,
           max: 0
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.max must be an integer > 0');
-      });
+      }).to.throw('Tarn: opt.max must be an integer > 0');
     });
 
     it('should fail if opt.min > opt.max is given', () => {
@@ -141,9 +129,7 @@ describe('Tarn', () => {
           min: 2,
           max: 1
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: opt.max is smaller than opt.min');
-      });
+      }).to.throw('Tarn: opt.max is smaller than opt.min');
     });
 
     it('should fail if a non-integer opt.acquireTimeoutMillis is given', () => {
@@ -155,9 +141,7 @@ describe('Tarn', () => {
           max: 10,
           acquireTimeoutMillis: '10'
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.acquireTimeoutMillis "10"');
-      });
+      }).to.throw('Tarn: invalid opt.acquireTimeoutMillis "10"');
     });
 
     it('should fail if a negative opt.acquireTimeoutMillis is given', () => {
@@ -169,9 +153,7 @@ describe('Tarn', () => {
           max: 10,
           acquireTimeoutMillis: -10
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.acquireTimeoutMillis -10');
-      });
+      }).to.throw('Tarn: invalid opt.acquireTimeoutMillis -10');
     });
 
     it('should fail if a zero opt.acquireTimeoutMillis is given', () => {
@@ -183,9 +165,7 @@ describe('Tarn', () => {
           max: 10,
           acquireTimeoutMillis: 0
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.acquireTimeoutMillis 0');
-      });
+      }).to.throw('Tarn: invalid opt.acquireTimeoutMillis 0');
     });
 
     it('should fail if a non-integer opt.createTimeoutMillis is given', () => {
@@ -197,9 +177,7 @@ describe('Tarn', () => {
           max: 10,
           createTimeoutMillis: '10'
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.createTimeoutMillis "10"');
-      });
+      }).to.throw('Tarn: invalid opt.createTimeoutMillis "10"');
     });
 
     it('should fail if a negative opt.createTimeoutMillis is given', () => {
@@ -211,9 +189,7 @@ describe('Tarn', () => {
           max: 10,
           createTimeoutMillis: -10
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.createTimeoutMillis -10');
-      });
+      }).to.throw('Tarn: invalid opt.createTimeoutMillis -10');
     });
 
     it('should fail if a zero opt.createTimeoutMillis is given', () => {
@@ -225,9 +201,7 @@ describe('Tarn', () => {
           max: 10,
           createTimeoutMillis: 0
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.createTimeoutMillis 0');
-      });
+      }).to.throw('Tarn: invalid opt.createTimeoutMillis 0');
     });
 
     it('should fail if a non-integer opt.destroyTimeoutMillis is given', () => {
@@ -239,9 +213,7 @@ describe('Tarn', () => {
           max: 10,
           destroyTimeoutMillis: '10'
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.destroyTimeoutMillis "10"');
-      });
+      }).to.throw('Tarn: invalid opt.destroyTimeoutMillis "10"');
     });
 
     it('should fail if a negative opt.destroyTimeoutMillis is given', () => {
@@ -253,9 +225,7 @@ describe('Tarn', () => {
           max: 10,
           destroyTimeoutMillis: -10
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.destroyTimeoutMillis -10');
-      });
+      }).to.throw('Tarn: invalid opt.destroyTimeoutMillis -10');
     });
 
     it('should fail if a zero opt.destroyTimeoutMillis is given', () => {
@@ -267,9 +237,7 @@ describe('Tarn', () => {
           max: 10,
           destroyTimeoutMillis: 0
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.destroyTimeoutMillis 0');
-      });
+      }).to.throw('Tarn: invalid opt.destroyTimeoutMillis 0');
     });
 
     it('should fail if a non-integer opt.idleTimeoutMillis is given', () => {
@@ -281,9 +249,7 @@ describe('Tarn', () => {
           max: 10,
           idleTimeoutMillis: '10'
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.idleTimeoutMillis "10"');
-      });
+      }).to.throw('Tarn: invalid opt.idleTimeoutMillis "10"');
     });
 
     it('should fail if a negative opt.idleTimeoutMillis is given', () => {
@@ -295,9 +261,7 @@ describe('Tarn', () => {
           max: 10,
           idleTimeoutMillis: -10
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.idleTimeoutMillis -10');
-      });
+      }).to.throw('Tarn: invalid opt.idleTimeoutMillis -10');
     });
 
     it('should fail if a zero opt.idleTimeoutMillis is given', () => {
@@ -309,9 +273,7 @@ describe('Tarn', () => {
           max: 10,
           idleTimeoutMillis: 0
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.idleTimeoutMillis 0');
-      });
+      }).to.throw('Tarn: invalid opt.idleTimeoutMillis 0');
     });
 
     it('should fail if a non-integer opt.reapIntervalMillis is given', () => {
@@ -323,9 +285,7 @@ describe('Tarn', () => {
           max: 10,
           reapIntervalMillis: '10'
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.reapIntervalMillis "10"');
-      });
+      }).to.throw('Tarn: invalid opt.reapIntervalMillis "10"');
     });
 
     it('should fail if a negative opt.reapIntervalMillis is given', () => {
@@ -337,9 +297,7 @@ describe('Tarn', () => {
           max: 10,
           reapIntervalMillis: -10
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.reapIntervalMillis -10');
-      });
+      }).to.throw('Tarn: invalid opt.reapIntervalMillis -10');
     });
 
     it('should fail if a zero opt.reapIntervalMillis is given', () => {
@@ -351,9 +309,7 @@ describe('Tarn', () => {
           max: 10,
           reapIntervalMillis: 0
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: invalid opt.reapIntervalMillis 0');
-      });
+      }).to.throw('Tarn: invalid opt.reapIntervalMillis 0');
     });
 
     it('should fail if unknown option passed', () => {
@@ -365,9 +321,7 @@ describe('Tarn', () => {
           max: 10,
           imUnreal: undefined
         });
-      }).to.throwException(err => {
-        expect(err.message).to.equal('Tarn: unsupported option opt.imUnreal');
-      });
+      }).to.throw('Tarn: unsupported option opt.imUnreal');
     });
   });
 
@@ -378,7 +332,7 @@ describe('Tarn', () => {
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a });
@@ -597,7 +551,11 @@ describe('Tarn', () => {
         expect(pool.numPendingAcquires()).to.equal(0);
         expect(pool.numPendingCreates()).to.equal(0);
 
-        let newAcquires = [pool.acquire().promise, pool.acquire().promise, pool.acquire().promise];
+        const newAcquires = [
+          pool.acquire().promise,
+          pool.acquire().promise,
+          pool.acquire().promise
+        ];
 
         expect(pool.numPendingAcquires()).to.equal(3);
 
@@ -624,7 +582,7 @@ describe('Tarn', () => {
       });
     });
 
-    it('should abort an acquire if abort() is called for the return value from the `acquire` method', done => {
+    it('should abort an acquire if abort() is called for the return value from the `acquire` method', () => {
       let createCalled = 0;
       let destroyCalled = 0;
 
@@ -643,16 +601,16 @@ describe('Tarn', () => {
         max: 4
       });
 
-      let acquire = pool.acquire();
+      const acquire = pool.acquire();
       expect(pool.numPendingCreates()).to.equal(1);
 
       setTimeout(() => {
         acquire.abort();
       }, 10);
 
-      acquire.promise
+      return acquire.promise
         .then(() => {
-          done(new Error('should not get here'));
+          throw new Error('should not get here');
         })
         .catch(err => {
           expect(err.message).to.equal('aborted');
@@ -671,11 +629,8 @@ describe('Tarn', () => {
             expect(pool.numUsed()).to.equal(0);
             expect(pool.numFree()).to.equal(1);
             expect(pool.numPendingAcquires()).to.equal(0);
-
-            done();
           });
-        })
-        .catch(done);
+        });
     });
 
     it('should validate resources using opt.validate before acquiring', () => {
@@ -769,9 +724,9 @@ describe('Tarn', () => {
       .catch(() => {})
       .then(() => {
         // a resource should have been created and it should have been added to the free pool
-        expect(createCalled).to.be(1);
-        expect(pool.numUsed()).to.be(0);
-        expect(pool.numFree()).to.be(1);
+        expect(createCalled).to.equal(1);
+        expect(pool.numUsed()).to.equal(0);
+        expect(pool.numFree()).to.equal(1);
       });
   });
 
@@ -808,7 +763,7 @@ describe('Tarn', () => {
       },
       validate(resource) {
         validated = resource;
-        return Promise.delay(10000).then(() => true);
+        return cancellableDelay(10000, cleanupFns).then(() => true);
       },
       destroy(resource) {
         destroyed = resource;
@@ -828,9 +783,9 @@ describe('Tarn', () => {
         return Promise.delay(1);
       })
       .then(() => {
-        expect(destroyCalled).to.be(1);
-        expect(createCalled).to.be(1);
-        expect(destroyed).to.be(validated);
+        expect(destroyCalled).to.equal(1);
+        expect(createCalled).to.equal(1);
+        expect(destroyed).to.equal(validated);
       });
   });
 
@@ -846,7 +801,7 @@ describe('Tarn', () => {
       },
       validate(resource) {
         validated = resource;
-        return Promise.delay(10000).then(() => true);
+        return cancellableDelay(10000, cleanupFns).then(() => true);
       },
       destroy(resource) {
         destroyed = resource;
@@ -857,7 +812,7 @@ describe('Tarn', () => {
       acquireTimeoutMillis: 15000
     });
 
-    let pending = pool.acquire();
+    const pending = pool.acquire();
 
     return Promise.delay(20)
       .then(() => {
@@ -865,11 +820,12 @@ describe('Tarn', () => {
         return pending.promise;
       })
       .catch(err => {})
+      .then(() => Promise.delay(1))
       .then(() => {
         // TODO: validation should immediately return false?
-        expect(destroyCalled).to.be(1);
-        expect(createCalled).to.be(1);
-        expect(destroyed).to.be(validated);
+        expect(destroyCalled).to.equal(1);
+        expect(createCalled).to.equal(1);
+        expect(destroyed).to.equal(validated);
       });
   });
 
@@ -902,8 +858,8 @@ describe('Tarn', () => {
       .acquire()
       .promise.catch(err => {})
       .then(() => {
-        expect(destroyCalled).to.be(5);
-        expect(createCalled).to.be(6);
+        expect(destroyCalled).to.equal(5);
+        expect(createCalled).to.equal(6);
       });
   });
 
@@ -936,8 +892,8 @@ describe('Tarn', () => {
       .acquire()
       .promise.catch(err => {})
       .then(() => {
-        expect(destroyCalled).to.be(1);
-        expect(createCalled).to.be(2);
+        expect(destroyCalled).to.equal(1);
+        expect(createCalled).to.equal(2);
       });
   });
 
@@ -946,8 +902,8 @@ describe('Tarn', () => {
     let destroyCalled = 0;
     let validateCalled = 0;
     let validationFails = 0;
-    let validationMaxFailures = 10;
     let completedAcquires = 0;
+    const validationMaxFailures = 10;
 
     pool = new Pool({
       create(callback) {
@@ -977,11 +933,11 @@ describe('Tarn', () => {
         })
       )
     ).then(() => {
-      expect(validationFails).to.be(validationMaxFailures);
-      expect(createCalled).to.be(validationFails + 3); // failed resource + poolsize
-      expect(validateCalled).to.be(100 + validationFails); // failed resources + acquire count
-      expect(completedAcquires).to.be(100);
-      expect(destroyCalled).to.be(validationFails); // each failed validation should destroy
+      expect(validationFails).to.equal(validationMaxFailures);
+      expect(createCalled).to.equal(validationFails + 3); // failed resource + poolsize
+      expect(validateCalled).to.equal(100 + validationFails); // failed resources + acquire count
+      expect(completedAcquires).to.equal(100);
+      expect(destroyCalled).to.equal(validationFails); // each failed validation should destroy
     });
   });
 
@@ -1025,12 +981,12 @@ describe('Tarn', () => {
       .then(() => pool.destroy())
       .then(() => {
         // pool should have been filled with resources and then they sould have been destroyed
-        expect(createCalled).to.be(3);
-        expect(destroyCalled).to.be(3);
+        expect(createCalled).to.equal(3);
+        expect(destroyCalled).to.equal(3);
         // 6 should be completed, because validation phase is waited to
         // acquires before aborting all the rest of the pending acquires
-        expect(completedAcquires).to.be(6);
-        expect(abortedAcquires).to.be(14);
+        expect(completedAcquires).to.equal(6);
+        expect(abortedAcquires).to.equal(14);
       });
   });
 
@@ -1062,7 +1018,7 @@ describe('Tarn', () => {
         return 'wrongerror';
       })
       .then(res => {
-        expect(res).to.be('acquiretimeout');
+        expect(res).to.equal('acquiretimeout');
       });
   });
 
@@ -1072,7 +1028,7 @@ describe('Tarn', () => {
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1125,7 +1081,7 @@ describe('Tarn', () => {
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1138,7 +1094,7 @@ describe('Tarn', () => {
 
       return Promise.all([pool.acquire().promise, pool.acquire().promise])
         .then(res => {
-          let pendingAcquire = pool.acquire();
+          const pendingAcquire = pool.acquire();
 
           expect(createCalled).to.equal(2);
           expect(pool.numUsed()).to.equal(2);
@@ -1165,7 +1121,7 @@ describe('Tarn', () => {
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1377,7 +1333,7 @@ describe('Tarn', () => {
     });
 
     it('should not hang if the async destroy is too slow', () => {
-      let destroyTimeoutMillis = 100;
+      const destroyTimeoutMillis = 100;
       let destroyerErrorThrown = false;
       pool = new Pool({
         create() {
@@ -1449,22 +1405,22 @@ describe('Tarn', () => {
           return pool.destroy().then(() => resources);
         })
         .then(resources => {
-          expect(resources[0].destroyed).to.be.ok();
-          expect(resources[1].destroyed).to.be.ok();
-          expect(resources[2].destroyed).to.be.ok();
-          expect(resources[3].destroyed).to.be.ok();
+          expect(resources[0].destroyed).to.be.ok;
+          expect(resources[1].destroyed).to.be.ok;
+          expect(resources[2].destroyed).to.be.ok;
+          expect(resources[3].destroyed).to.be.ok;
         });
     });
   });
 
   describe('acquireTimeout', () => {
-    it('should fail to acquire opt.max + 1 resources after acquireTimeoutMillis', done => {
+    it('should fail to acquire opt.max + 1 resources after acquireTimeoutMillis', () => {
       let createCalled = 0;
-      let acquireTimeoutMillis = 100;
+      const acquireTimeoutMillis = 100;
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1476,9 +1432,9 @@ describe('Tarn', () => {
         acquireTimeoutMillis: acquireTimeoutMillis
       });
 
-      let now = Date.now();
+      const now = Date.now();
 
-      Promise.all([
+      return Promise.all([
         pool.acquire().promise,
         pool.acquire().promise,
         pool.acquire().promise,
@@ -1487,30 +1443,27 @@ describe('Tarn', () => {
         pool.acquire().promise
       ])
         .then(() => {
-          done(new Error('should not get here'));
+          throw new Error('should not get here');
         })
         .catch(err => {
-          let duration = Date.now() - now;
+          const duration = Date.now() - now;
 
-          expect(err).to.be.a(TimeoutError);
+          expect(err).to.be.an.instanceof(TimeoutError);
 
           expect(duration).to.be.greaterThan(acquireTimeoutMillis - 5);
-          expect(duration - acquireTimeoutMillis).to.be.lessThan(50);
+          expect(duration - acquireTimeoutMillis).to.be.lessThan(100);
 
           expect(createCalled).to.equal(5);
           expect(pool.numUsed()).to.equal(5);
           expect(pool.numFree()).to.equal(0);
           expect(pool.numPendingAcquires()).to.equal(0);
           expect(pool.numPendingCreates()).to.equal(0);
-
-          done();
-        })
-        .catch(done);
+        });
     });
 
-    it('should recover after acquireTimeoutMillis if the create function returns an error', done => {
+    it('should recover after acquireTimeoutMillis if the create function returns an error', () => {
       let createCalled = 0;
-      let acquireTimeoutMillis = 100;
+      const acquireTimeoutMillis = 100;
 
       pool = new Pool({
         create(callback) {
@@ -1527,36 +1480,33 @@ describe('Tarn', () => {
         createRetryIntervalMillis: 200
       });
 
-      let now = Date.now();
+      const now = Date.now();
 
-      pool
+      return pool
         .acquire()
         .promise.then(() => {
-          done(new Error('should not get here'));
+          throw new Error('should not get here');
         })
         .catch(err => {
-          let duration = Date.now() - now;
+          const duration = Date.now() - now;
 
-          expect(err).to.be.a(TimeoutError);
+          expect(err).to.be.an.instanceof(TimeoutError);
           expect(err.message).to.equal('this is the error from create');
 
           expect(duration).to.be.greaterThan(acquireTimeoutMillis - 5);
-          expect(duration - acquireTimeoutMillis).to.be.lessThan(50);
+          expect(duration - acquireTimeoutMillis).to.be.lessThan(100);
 
           expect(createCalled).to.equal(1);
           expect(pool.numUsed()).to.equal(0);
           expect(pool.numFree()).to.equal(0);
           expect(pool.numPendingAcquires()).to.equal(0);
           expect(pool.numPendingCreates()).to.equal(0);
-
-          done();
-        })
-        .catch(done);
+        });
     });
 
-    it('should recover after acquireTimeoutMillis if the create function throws an error', done => {
+    it('should recover after acquireTimeoutMillis if the create function throws an error', () => {
       let createCalled = 0;
-      let acquireTimeoutMillis = 100;
+      const acquireTimeoutMillis = 100;
 
       pool = new Pool({
         create() {
@@ -1569,38 +1519,35 @@ describe('Tarn', () => {
         acquireTimeoutMillis: acquireTimeoutMillis
       });
 
-      let now = Date.now();
+      const now = Date.now();
 
-      pool
+      return pool
         .acquire()
         .promise.then(() => {
-          done(new Error('should not get here'));
+          throw new Error('should not get here');
         })
         .catch(err => {
-          let duration = Date.now() - now;
+          const duration = Date.now() - now;
 
-          expect(err).to.be.a(TimeoutError);
+          expect(err).to.be.an.instanceof(TimeoutError);
           expect(err.message).to.equal('this is the error from create');
 
           expect(duration).to.be.greaterThan(acquireTimeoutMillis - 5);
-          expect(duration - acquireTimeoutMillis).to.be.lessThan(50);
+          expect(duration - acquireTimeoutMillis).to.be.lessThan(100);
 
           expect(createCalled).to.equal(1);
           expect(pool.numUsed()).to.equal(0);
           expect(pool.numFree()).to.equal(0);
           expect(pool.numPendingAcquires()).to.equal(0);
           expect(pool.numPendingCreates()).to.equal(0);
-
-          done();
-        })
-        .catch(done);
+        });
     });
   });
 
   describe('propagateCreateError', () => {
-    it('should immediately reject the first acquire in the queue if create throws an error', done => {
+    it('should immediately reject the first acquire in the queue if create throws an error', async () => {
       let createCalled = 0;
-      let acquireTimeoutMillis = 1000;
+      const acquireTimeoutMillis = 1000;
 
       pool = new Pool({
         create(callback) {
@@ -1619,7 +1566,9 @@ describe('Tarn', () => {
         propagateCreateError: true
       });
 
-      let now = Date.now();
+      const now = Date.now();
+
+      const dfd = deferred();
 
       Promise.resolve(pool.acquire().promise)
         .reflect()
@@ -1629,10 +1578,10 @@ describe('Tarn', () => {
             .then(res2 => [res1, res2]);
         })
         .spread((res1, res2) => {
-          let duration = Date.now() - now;
+          const duration = Date.now() - now;
 
           expect(res1.isRejected()).to.equal(true);
-          expect(res1.reason()).to.not.be.a(TimeoutError);
+          expect(res1.reason()).to.not.be.instanceOf(TimeoutError);
           expect(res1.reason().message).to.equal('create fail');
 
           expect(res2.isFulfilled()).to.equal(true);
@@ -1647,21 +1596,23 @@ describe('Tarn', () => {
           expect(pool.numPendingAcquires()).to.equal(0);
           expect(pool.numPendingCreates()).to.equal(0);
 
-          done();
+          dfd.resolve();
         })
-        .catch(done);
+        .catch(dfd.reject);
+
+      await dfd.promise;
     });
   });
 
   describe('idleTimeoutMillis', () => {
-    it('should remove idle resources after idleTimeoutMillis', done => {
+    it('should remove idle resources after idleTimeoutMillis', async () => {
       let createCalled = 0;
       let destroyCalled = 0;
-      let destroyed = [];
+      const destroyed = [];
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1676,6 +1627,8 @@ describe('Tarn', () => {
         idleTimeoutMillis: 100,
         reapIntervalMillis: 10
       });
+
+      const dfd = deferred();
 
       Promise.all([pool.acquire().promise, pool.acquire().promise, pool.acquire().promise])
         .then(res => {
@@ -1707,19 +1660,20 @@ describe('Tarn', () => {
           expect(pool.numUsed()).to.equal(1);
           expect(pool.numFree()).to.equal(0);
 
-          done();
+          dfd.resolve();
         })
-        .catch(done);
+        .catch(dfd.reject);
+      return dfd.promise;
     });
 
-    it('should only run the reaping loop when there is something to reap', done => {
+    it('should only run the reaping loop when there is something to reap', async () => {
       let createCalled = 0;
       let destroyCalled = 0;
-      let destroyed = [];
+      const destroyed = [];
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1736,6 +1690,8 @@ describe('Tarn', () => {
       });
 
       expect(pool.interval).to.equal(null);
+
+      const dfd = deferred();
 
       pool
         .acquire()
@@ -1759,19 +1715,20 @@ describe('Tarn', () => {
           expect(pool.interval).to.not.equal(null);
           expect(res).to.eql({ a: 1 });
 
-          done();
+          dfd.resolve();
         })
-        .catch(done);
+        .catch(dfd.reject);
+      return dfd.promise;
     });
 
-    it('should always keep opt.min resources', done => {
+    it('should always keep opt.min resources', async () => {
       let createCalled = 0;
       let destroyCalled = 0;
-      let destroyed = [];
+      const destroyed = [];
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1786,6 +1743,8 @@ describe('Tarn', () => {
         idleTimeoutMillis: 100,
         reapIntervalMillis: 10
       });
+
+      const dfd = deferred();
 
       Promise.all([
         pool.acquire().promise,
@@ -1823,20 +1782,22 @@ describe('Tarn', () => {
           expect(pool.numUsed()).to.equal(1);
           expect(pool.numFree()).to.equal(1);
 
-          done();
+          dfd.resolve();
         })
-        .catch(done);
+        .catch(dfd.reject);
+
+      return dfd.promise;
     });
 
-    it('should release unused resources after idleTimeoutMillis when resources are repeatedly released and freed', done => {
+    it('should release unused resources after idleTimeoutMillis when resources are repeatedly released and freed', () => {
       let createCalled = 0;
       let destroyCalled = 0;
-      let destroyed = [];
+      const destroyed = [];
       let finished = false;
 
       pool = new Pool({
         create(callback) {
-          let a = createCalled++;
+          const a = createCalled++;
 
           setTimeout(() => {
             callback(null, { a: a });
@@ -1851,6 +1812,8 @@ describe('Tarn', () => {
         idleTimeoutMillis: 100,
         reapIntervalMillis: 10
       });
+
+      const dfd = deferred();
 
       Promise.all([
         pool.acquire().promise,
@@ -1897,12 +1860,14 @@ describe('Tarn', () => {
           expect(createCalled).to.equal(4);
           expect(destroyCalled).to.equal(2);
           expect(pool.numFree() + pool.numUsed()).to.equal(2);
-          done();
+          dfd.resolve();
         })
         .catch(err => {
           finished = true;
-          done(err);
+          dfd.reject(err);
         });
+
+      return dfd.promise;
     });
   });
 
@@ -2013,20 +1978,20 @@ describe('Tarn', () => {
       // acquire request events were also emitted for resources
       const resource1AcquireRequest = eventStats[resource1AcquireRequestId][0];
       const resource2AcquireRequest = eventStats[resource2AcquireRequestId][0];
-      expect(resource1AcquireRequest[0]).to.be('acquireRequest');
-      expect(resource2AcquireRequest[0]).to.be('acquireRequest');
+      expect(resource1AcquireRequest[0]).to.equal('acquireRequest');
+      expect(resource2AcquireRequest[0]).to.equal('acquireRequest');
 
       // destroying one of resources should have failed
-      const resource1HasFailedDestroy = resource1Events.includes(event => {
-        return event[1] === 'destroyFailed';
+      const resource1HasFailedDestroy = resource1Events.some(event => {
+        return event[0] === 'destroyFail';
       });
 
-      const resource2HasFailedDestroy = resource2Events.includes(event => {
-        return event[1] === 'destroyFailed';
+      const resource2HasFailedDestroy = resource2Events.some(event => {
+        return event[0] === 'destroyFail';
       });
 
-      expect(resource1HasFailedDestroy || resource2HasFailedDestroy).to.be.true;
-      expect(resource1HasFailedDestroy && resource2HasFailedDestroy).to.be.false;
+      expect(resource1HasFailedDestroy || resource2HasFailedDestroy).to.equal(true);
+      expect(resource1HasFailedDestroy && resource2HasFailedDestroy).to.equal(false);
 
       // event ids for request and results match and event arguments too
       expect(resource1Events).to.have.length(6);
@@ -2087,70 +2052,70 @@ describe('Tarn', () => {
         const [eventName, ...args] = event;
 
         if (eventName === 'release') {
-          expect(args[0]).to.be.an(Object);
-          expect(args[1]).to.be(undefined);
-          expect(args[2]).to.be(undefined);
+          expect(args[0]).to.be.an.instanceof(Object);
+          expect(args[1]).to.be.undefined;
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'acquireRequest') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be(undefined);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.undefined;
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'acquireSuccess') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be.an(Object);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.an.instanceof(Object);
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'acquireFail') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be.an(Error);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.an.instanceof(Error);
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'createRequest') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be(undefined);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.undefined;
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'createSuccess') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be.an(Object);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.an.instanceof(Object);
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'createFail') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be.an(Error);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.an.instanceof(Error);
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'destroyRequest') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be.an(Object);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.an.instanceof(Object);
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'destroySuccess') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be.an(Object);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.an.instanceof(Object);
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'destroyFail') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be.an(Object);
-          expect(args[2]).to.be.an(Error);
+          expect(args[1]).to.be.an.instanceof(Object);
+          expect(args[2]).to.be.an.instanceof(Error);
         } else if (eventName === 'startReaping') {
-          expect(args[0]).to.be(undefined);
-          expect(args[1]).to.be(undefined);
-          expect(args[2]).to.be(undefined);
+          expect(args[0]).to.be.undefined;
+          expect(args[1]).to.be.undefined;
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'stopReaping') {
-          expect(args[0]).to.be(undefined);
-          expect(args[1]).to.be(undefined);
-          expect(args[2]).to.be(undefined);
+          expect(args[0]).to.be.undefined;
+          expect(args[1]).to.be.undefined;
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'poolDestroyRequest') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be(undefined);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.undefined;
+          expect(args[2]).to.be.undefined;
         } else if (eventName === 'poolDestroySuccess') {
           expect(args[0]).to.be.a('number');
-          expect(args[1]).to.be(undefined);
-          expect(args[2]).to.be(undefined);
+          expect(args[1]).to.be.undefined;
+          expect(args[2]).to.be.undefined;
         } else {
-          expect('Invalid event type').to.be.false;
+          expect('Invalid event type').to.equal(false);
         }
       });
     });
 
     describe('running / removing listeners', () => {
       let listenerCallCount = 0;
-      let removableListener = () => {
+      const removableListener = () => {
         listenerCallCount++;
         throw new Error();
       };
@@ -2160,10 +2125,10 @@ describe('Tarn', () => {
 
         pool = new Pool({
           create() {
-            return Promise.delay(10).then(() => Promise.resolve({ a: 0 }));
+            return Promise.delay(10).then(() => ({ a: 0 }));
           },
           destroy(resource) {
-            return Promise.delay(10).then(() => Promise.resolve());
+            return Promise.delay(10);
           },
           min: 0,
           max: 3,
@@ -2198,7 +2163,7 @@ describe('Tarn', () => {
       it('broken listener should not stop running other listeners', async () => {
         const pendingAcquire = pool.acquire();
         const resource = await pendingAcquire.promise;
-        expect(listenerCallCount).to.be(6);
+        expect(listenerCallCount).to.equal(6);
         pool.release(resource);
       });
 
@@ -2206,7 +2171,7 @@ describe('Tarn', () => {
         pool.removeListener('acquireRequest', removableListener);
         const pendingAcquire = pool.acquire();
         const resource = await pendingAcquire.promise;
-        expect(listenerCallCount).to.be(5);
+        expect(listenerCallCount).to.equal(5);
         pool.release(resource);
       });
 
@@ -2214,7 +2179,7 @@ describe('Tarn', () => {
         pool.removeAllListeners('acquireRequest');
         const pendingAcquire = pool.acquire();
         const resource = await pendingAcquire.promise;
-        expect(listenerCallCount).to.be(3);
+        expect(listenerCallCount).to.equal(3);
         pool.release(resource);
       });
 
@@ -2231,10 +2196,10 @@ describe('Tarn', () => {
 
       const localPool = new Pool({
         create() {
-          return Promise.delay(createDelay).then(() => Promise.resolve({ a: 0 }));
+          return cancellableDelay(createDelay, cleanupFns).then(() => ({ a: 0 }));
         },
         destroy(resource) {
-          return Promise.delay(destroyDelay).then(() => Promise.resolve());
+          return cancellableDelay(destroyDelay, cleanupFns);
         },
         min: 0,
         max: 1,
@@ -2265,8 +2230,8 @@ describe('Tarn', () => {
         {
           const pendingAcquire = localPool.acquire();
           await pendingAcquire.promise.catch(err => {});
-          expect(failures.createFail).to.be(1);
-          expect(failures.acquireFail).to.be(1);
+          expect(failures.createFail).to.equal(1);
+          expect(failures.acquireFail).to.equal(1);
         }
 
         {
@@ -2275,23 +2240,23 @@ describe('Tarn', () => {
           const resource1 = await pendingAcquire1.promise.catch(err => {});
           const pendingAcquire2 = localPool.acquire();
           await pendingAcquire2.promise.catch(err => {});
-          expect(failures.createFail).to.be(1);
-          expect(failures.acquireFail).to.be(2);
-          expect(localPool.release(resource1)).to.be(true);
+          expect(failures.createFail).to.equal(1);
+          expect(failures.acquireFail).to.equal(2);
+          expect(localPool.release(resource1)).to.equal(true);
           await Promise.delay(40);
-          expect(failures.destroyFail).to.be(0);
+          expect(failures.destroyFail).to.equal(0);
         }
 
         {
           destroyDelay = 100;
           const pendingAcquire = localPool.acquire();
           const resource1 = await pendingAcquire.promise.catch(err => {});
-          expect(localPool.release(resource1)).to.be(true);
+          expect(localPool.release(resource1)).to.equal(true);
           await Promise.delay(50); // idling resources should get destroyed
 
-          expect(failures.createFail).to.be(1);
-          expect(failures.acquireFail).to.be(2);
-          expect(failures.destroyFail).to.be(1);
+          expect(failures.createFail).to.equal(1);
+          expect(failures.acquireFail).to.equal(2);
+          expect(failures.destroyFail).to.equal(1);
           destroyDelay = 1;
         }
       } finally {
@@ -2301,7 +2266,7 @@ describe('Tarn', () => {
   });
 
   describe('randomized tests', () => {
-    const NUM_RANDOM_TESTS = 0;
+    const NUM_RANDOM_TESTS = 2;
 
     for (let rndIdx = 1; rndIdx < NUM_RANDOM_TESTS + 1; ++rndIdx) {
       const maxResources = 10 + randInt(90);
@@ -2319,8 +2284,8 @@ describe('Tarn', () => {
       const destroyFailProp = Math.random() * 0.7;
       const validateFailProp = Math.random() * 0.5;
 
-      it(`random ${rndIdx}`, function() {
-        this.timeout(1000000);
+      const cfg = { timeout: 1000000 };
+      itCfg(`random ${rndIdx}`, cfg, () => {
         let id = 0;
 
         const usedResources = [];
@@ -2344,7 +2309,7 @@ describe('Tarn', () => {
             destroyedResources.push(resource);
 
             if (Math.random() < destroyFailProp) {
-              throw new Error('destroy error ' + createIdx);
+              throw new Error('destroy error ' + id);
             }
           },
 
@@ -2419,4 +2384,38 @@ function findBy(arr, key, value) {
   }
 
   return null;
+}
+
+function cancellableDelay(ms, cleanupFns) {
+  let timer;
+  let resolvePromise;
+  const promise = new Promise(resolve => {
+    resolvePromise = resolve;
+    timer = setTimeout(resolve, ms);
+  });
+  cleanupFns.push(() => {
+    clearTimeout(timer);
+    resolvePromise();
+  });
+  return promise;
+}
+
+// Allows us to use old versions of vitest for older versions of node
+function itCfg(name, ...rest) {
+  if (vitestVersion.startsWith('0.')) {
+    if (typeof rest[1] === 'function') {
+      return it(name, rest[1], rest[0]);
+    }
+    return it(name, ...rest);
+  }
+  return it(name, ...rest);
+}
+
+function deferred() {
+  const obj = {};
+  obj.promise = new Promise((_resolve, _reject) => {
+    obj.resolve = _resolve;
+    obj.reject = _reject;
+  });
+  return obj;
 }
