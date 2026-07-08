@@ -161,6 +161,10 @@ pool.removeAllListeners(eventName);
 
 ## Changelog
 
+### 3.1.2 2026-07-08
+
+- Re-publish of 3.1.1, which incorrectly published code from 3.1.0
+
 ### 3.1.1 2026-07-08
 
 - Fixes type error with TS 6
